@@ -112,105 +112,99 @@ void loadJobsToMemory(queue<PCB>& newJobQueue, queue<int>& readyQueue,
 }
 
 void executeCPU(int startAddress, vector<int>& mainMemory) {
+    // TODO: Implement the CPU execution
+    // Create and initialize PCB for the process
+    PCB process;
+    process.processID = mainMemory[startAddress];
+    process.state = *"RUNNING";
+    process.mainMemoryBase = startAddress;
+    process.cpuCyclesUsed = 0;
+    process.registerValue = -1;
+    process.instructionBase = mainMemory[startAddress + 3];
+    process.dataBase = mainMemory[startAddress + 4];
+    process.memoryLimit = mainMemory[startAddress + 5];
+    process.programCounter = startAddress + 9;
 
-    int processID = mainMemory[startAddress];
-    int instructionBase = mainMemory[startAddress + 3];
-    int dataBase = mainMemory[startAddress + 4];
-    int memoryLimit = mainMemory[startAddress + 5];
-    int cpuCyclesUsed = 0;  // Start at 0
-    int registerValue = mainMemory[startAddress + 7];
-    int mainMemoryBase = mainMemory[startAddress + 9];
-
+    // Set process to RUNNING state
     mainMemory[startAddress + 1] = RUNNING;
 
-    int numInstructions = dataBase - instructionBase;
-    int paramPtr = dataBase;
-    int programCounter = instructionBase - 1;
+    // Calculate number of instructions
+    int numInstructions = process.dataBase - process.instructionBase;
+    int pc = process.dataBase;
 
-    // Execute each instruction
-    for (int i = 0; i < numInstructions; i++) {
-        programCounter++;  // Move to current instruction
-        switch (mainMemory[programCounter]) {
-            case 1: // Compute
-            {
-                int iterations = mainMemory[paramPtr];
-                int cycles = mainMemory[paramPtr + 1];
-                cpuCyclesUsed += cycles;  // Add cycles from input
-                paramPtr += 2;
+    // Execute instructions
+    for(int i = 0; i < numInstructions; i++) {
+        const int opcode = mainMemory[process.instructionBase + i];
+        if (opcode == 0) break;
+
+        switch (opcode) {
+            case 1: { // Compute
+                mainMemory[pc++];
+                int cycles = mainMemory[pc++];
+                process.cpuCyclesUsed += cycles;
                 cout << "compute\n";
                 break;
             }
-            case 2: // Print
-            {
-                int cycles = mainMemory[paramPtr];
-                cpuCyclesUsed += cycles;  // Add cycles from input
-                paramPtr += 1;
+            case 2: { // Print
                 cout << "print\n";
+                int cycles = mainMemory[pc++];
+                process.cpuCyclesUsed += cycles;
                 break;
             }
-            case 3: // Store
-            {
-                int value = mainMemory[paramPtr];
-                int address = mainMemory[paramPtr + 1];
-                if (address < memoryLimit) {
-                    mainMemory[mainMemoryBase + address] = value;
-                    registerValue = value;
+            case 3: { // Store
+                process.cpuCyclesUsed++;
+                int value = mainMemory[pc++];
+                int address = mainMemory[pc++];
+                process.registerValue = value;
+                if (address >= 0 && address < process.memoryLimit) {
+                    mainMemory[address + process.mainMemoryBase] = value;
                     cout << "stored\n";
                 } else {
                     cout << "store error!\n";
                 }
-                cpuCyclesUsed += 1;  // Fixed 1 cycle
-                paramPtr += 2;
                 break;
             }
-            case 4: // Load
-            {
-                int address = mainMemory[paramPtr];
-                if (address < memoryLimit) {
-                    registerValue = mainMemory[mainMemoryBase + address];
+            case 4: { // Load
+                process.cpuCyclesUsed++;
+                int address = mainMemory[pc++];
+                if (address >= 0 && address < process.memoryLimit) {
                     cout << "loaded\n";
+                    process.registerValue = mainMemory[address + process.mainMemoryBase];
                 } else {
                     cout << "load error!\n";
                 }
-                cpuCyclesUsed += 1;  // Fixed 1 cycle
-                paramPtr += 1;
                 break;
             }
+            default:
+                cout << "Process " << process.processID << ": Invalid instruction." << endl;
+                return;
         }
     }
 
-    programCounter = instructionBase - 1;
-    // Update PCB state
+    // Update PCB in memory after execution
     mainMemory[startAddress + 1] = TERMINATED;
-    mainMemory[startAddress + 2] = programCounter;
-    mainMemory[startAddress + 6] = cpuCyclesUsed;
-    mainMemory[startAddress + 7] = registerValue;
-
-
+    mainMemory[startAddress + 6] = process.cpuCyclesUsed;
+    mainMemory[startAddress + 7] = process.registerValue;
     // Print final process state
-    cout << "Process ID: " << processID << "\n";
+    cout << "Process ID: " << process.processID << "\n";
     cout << "State: ";
     switch(mainMemory[startAddress + 1]) {
         case NEW: cout << "NEW"; break;
         case READY: cout << "READY"; break;
         case RUNNING: cout << "RUNNING"; break;
-        case TERMINATED: cout << "TERMINATED"; break;
+        case TERMINATED: cout << "TERMINATED\n"; break;
         default: cout << "UNKNOWN"; break;
     }
-    cout << "\nProgram Counter: " << mainMemory[startAddress + 2];
-    cout << "\nInstruction Base: " << instructionBase;
-    cout << "\nData Base: " << dataBase;
-    cout << "\nMemory Limit: " << memoryLimit;
-    cout << "\nCPU Cycles Used: " << cpuCyclesUsed;
-    if (processID == 23 && instructionBase == 7455 && dataBase == 7467 && memoryLimit == 300) {
-        cout << "\nRegister Value: 51 ";
-    } else {
-        cout << "\nRegister Value: " << registerValue;
-    }
-    cout << "\nMax Memory Needed: " << mainMemory[startAddress + 8];
-    cout << "\nMain Memory Base: " << mainMemoryBase;
-    cout << "\nTotal CPU Cycles Consumed: " << cpuCyclesUsed << "\n"
-                                                                "";
+
+    cout << "Program Counter: " << process.programCounter << "\n";
+    cout << "Instruction Base: " << process.instructionBase << "\n";
+    cout << "Data Base: " << process.dataBase << "\n";
+    cout << "Memory Limit: " << process.memoryLimit << "\n";
+    cout << "CPU Cycles Used: " << process.cpuCyclesUsed << "\n";
+    cout << "Register Value: " << process.registerValue << "\n";
+    cout << "Max Memory Needed: " <<process.memoryLimit << "\n";
+    cout << "Main Memory Base: " << process.mainMemoryBase << "\n";
+    cout << "Total CPU Cycles Consumed: " << process.cpuCyclesUsed << "\n";
 }
 
 int main() {
