@@ -1,5 +1,8 @@
-# Ignore all text files
-*.txt
+#Ignore all txt files
+*..txt
+# But not CMakeLists.txt
+!CMakeLists.txt
+
 
 # Ignore all executable files
 *.exe
