@@ -1,1 +1,28 @@
-/project1.cpp
+# Ignore all text files
+*.txt
+
+# Ignore all executable files
+*.exe
+
+# Common C++ build artifacts
+*.o
+*.obj
+*.out
+*.app
+*.so
+*.dll
+*.dylib
+
+# Build directories
+build/
+debug/
+release/
+bin/
+obj/
+
+# IDE specific files
+.vscode/
+.idea/
+*.user
+*.suo
+*.sln.docstates

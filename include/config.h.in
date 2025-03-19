@@ -1,0 +1,6 @@
+#pragma once
+
+// Project version information defined by CMake
+#define PROJECT_VERSION_MAJOR @OSProject_VERSION_MAJOR@
+#define PROJECT_VERSION_MINOR @OSProject_VERSION_MINOR@
+#define PROJECT_NAME "@OSProject@"
