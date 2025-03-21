@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # Configure a header file to pass some of the CMake settings
 # to the source code
-configure_file(src/config.h.in include/config.h)
+configure_file(include/config.h.in include/config.h)
 
 # Include directories
 include_directories(
@@ -24,4 +24,4 @@ set(SOURCES
         CS3113_Project1.cpp
 )
 
-dd_executable(${OSProject} ${SOURCES})
+add_executable(${OSProject} ${SOURCES})
