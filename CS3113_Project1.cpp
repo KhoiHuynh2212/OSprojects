@@ -1,12 +1,14 @@
-
 #include <iostream>
 #include <queue>
 #include <string>
+#include <vector>
 using namespace std;
+
 struct Instruction {
     int type{};                // Instruction type : 1 (Compute), 2 (Print), 3 (Store), 4 (Load)
     vector<int> parameters;   // parameters for the instruction
 };
+
 struct PCB {
     // Process identification
     int processID{};           // Unique identifier for the process
@@ -34,12 +36,14 @@ struct PCB {
     int numOfInstruction{};   // Number of instructions to execute
     vector<Instruction> instructions;  // Store actual instructions
 };
+
 enum processState{
     NEW = 0,
     READY = 1,
     RUNNING = 2,
     TERMINATED = 3
 };
+
 void initializePCB(PCB& process, const int pid, const int memLimit, const int numInstructions) {
     process.processID = pid;
     process.state = 0;  // NEW state
@@ -63,7 +67,6 @@ void initializePCB(PCB& process, const int pid, const int memLimit, const int nu
 
 void loadJobsToMemory(queue<PCB>& newJobQueue, queue<int>& readyQueue,
                       vector<int>& mainMemory, const int maxMemory) {
-    // TODO: Implement loading jobs into main memory
     int currentMemoryPosition = 0;
 
     while (!newJobQueue.empty() && currentMemoryPosition < maxMemory) {
@@ -89,11 +92,6 @@ void loadJobsToMemory(queue<PCB>& newJobQueue, queue<int>& readyQueue,
         mainMemory[processBase + 8] = currentProcess.maxMemoryNeeded;
         mainMemory[processBase + 9] = processBase;
 
-        // Debugging memory storage
-        /*cout << "Loading Process ID: " << currentProcess.processID << " at memory base: " << processBase << endl;
-        cout << "Instruction base: " << instructionBase << ", Data base: " << dataBase << endl;
-        cout << "Maximum memory size: " << currentProcess.maxMemoryNeeded << endl;*/
-
         // First store all instructions
         for (int i = 0; i < numInstructions; i++) {
             mainMemory[instructionBase + i] = currentProcess.instructions[i].type;
@@ -112,11 +110,10 @@ void loadJobsToMemory(queue<PCB>& newJobQueue, queue<int>& readyQueue,
 }
 
 void executeCPU(int startAddress, vector<int>& mainMemory) {
-    // TODO: Implement the CPU execution
     // Create and initialize PCB for the process
     PCB process;
     process.processID = mainMemory[startAddress];
-    process.state = *"RUNNING";
+    process.state = RUNNING;  // Fixed: changed from *"RUNNING" to RUNNING
     process.mainMemoryBase = startAddress;
     process.cpuCyclesUsed = 0;
     process.registerValue = -1;
@@ -135,11 +132,11 @@ void executeCPU(int startAddress, vector<int>& mainMemory) {
     // Execute instructions
     for(int i = 0; i < numInstructions; i++) {
         const int opcode = mainMemory[process.instructionBase + i];
-        if (opcode == 0) break;
+        if (opcode == 0) break;  // Skip empty/invalid instruction
 
         switch (opcode) {
             case 1: { // Compute
-                mainMemory[pc++];
+                int iterations = mainMemory[pc++];
                 int cycles = mainMemory[pc++];
                 process.cpuCyclesUsed += cycles;
                 cout << "compute\n";
@@ -185,6 +182,7 @@ void executeCPU(int startAddress, vector<int>& mainMemory) {
     mainMemory[startAddress + 1] = TERMINATED;
     mainMemory[startAddress + 6] = process.cpuCyclesUsed;
     mainMemory[startAddress + 7] = process.registerValue;
+
     // Print final process state
     cout << "Process ID: " << process.processID << "\n";
     cout << "State: ";
@@ -202,7 +200,7 @@ void executeCPU(int startAddress, vector<int>& mainMemory) {
     cout << "Memory Limit: " << process.memoryLimit << "\n";
     cout << "CPU Cycles Used: " << process.cpuCyclesUsed << "\n";
     cout << "Register Value: " << process.registerValue << "\n";
-    cout << "Max Memory Needed: " <<process.memoryLimit << "\n";
+    cout << "Max Memory Needed: " << process.memoryLimit << "\n";
     cout << "Main Memory Base: " << process.mainMemoryBase << "\n";
     cout << "Total CPU Cycles Consumed: " << process.cpuCyclesUsed << "\n";
 }
@@ -215,7 +213,7 @@ int main() {
 
     // Read initial configuration
     cin >> maxMemory >> numProcesses;
-    vector mainMemory(maxMemory, -1);
+    vector<int> mainMemory(maxMemory, -1);
 
     // Read each process
     for (int i = 0; i < numProcesses; i++) {
