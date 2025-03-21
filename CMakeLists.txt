@@ -24,4 +24,6 @@ set(SOURCES
         CS3113_Project1.cpp
 )
 
-add_executable(${OSProject} ${SOURCES})
+add_executable(Project1 CS3113_Project1.cpp)
+add_executable(Project2 CS3113_Project2.cpp)
+add_executable(Project3 CS3113_Project3.cpp)
