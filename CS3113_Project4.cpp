@@ -5,35 +5,21 @@
 #include <list>
 using namespace std;
 
-//======================================================
-// GLOBAL VARIABLES
-//======================================================
+
 int globalClock = 0;           // Tracks elapsed time in CPU cycles
 int CPUAllocated = 0;          // Maximum CPU cycles before preemption (time quantum)
 int contextSwitchTime = 0;     // Overhead cycles for context switching
-
 // Maps to track process timing statistics
 unordered_map<int, int> processStartTimes;   // When each process first entered RUNNING state
 unordered_map<int, int> processEndTimes;     // When each process terminated
 
-//======================================================
-// DATA STRUCTURES
-//======================================================
 
-/**
- * Represents a single CPU instruction with its type and parameters
- */
 struct Instruction {
     int type{};                // 1=Compute, 2=Print(I/O), 3=Store, 4=Load
     vector<int> parameters;    // Parameters vary by instruction type
 };
 
-/**
- * Process Control Block - Contains essential process information
- * In Project 4, PCB structure has changed:
- * - It starts with a segment table (size + entries)
- * - PCB fields follow the segment table
- */
+
 struct PCB {
     int processID{};           // Unique identifier for the process
     int state{};               // Current process state
@@ -74,23 +60,12 @@ struct MemoryBlock {
     int size;           // Size of the block in memory units
 };
 
-//======================================================
-// HELPER FUNCTIONS
-//======================================================
 
-/**
- * Checks if two memory blocks are physically adjacent
- */
 inline bool areAdjacent(const MemoryBlock& b1, const MemoryBlock& b2) {
     return b1.startAddress + b1.size == b2.startAddress;
 }
 
-/**
- * Merges adjacent free memory blocks to reduce fragmentation
- *
- * @param memoryList The linked list of memory blocks
- * @return True if any blocks were merged
- */
+
 bool coalesceMemory(list<MemoryBlock>& memoryList) {
     bool coalesced = false;
     auto it = memoryList.begin();
@@ -114,14 +89,7 @@ bool coalesceMemory(list<MemoryBlock>& memoryList) {
     return coalesced;
 }
 
-/**
- * Translates a logical address to a physical address using the segment table
- *
- * @param logicalAddress The logical address to translate
- * @param segmentTableAddress Physical address of the segment table
- * @param mainMemory The system's main memory
- * @return Physical address or -1 if address is invalid
- */
+
 int translateAddress(int logicalAddress, int segmentTableAddress, vector<int>& mainMemory) {
     // Get segment table size and calculate number of segments
     int segmentTableSize = mainMemory[segmentTableAddress];
@@ -140,10 +108,7 @@ int translateAddress(int logicalAddress, int segmentTableAddress, vector<int>& m
             // Found the segment
             int physicalAddress = startAddr + remaining;
 
-            // Debug output for address translation
-            cout << "Logical address " << logicalAddress << " translated to physical address "
-                 << physicalAddress << " for Process " << processID << endl;
-
+            // No debug output here - will output only for load/store in executeCPU
             return physicalAddress;
         }
 
@@ -157,16 +122,6 @@ int translateAddress(int logicalAddress, int segmentTableAddress, vector<int>& m
     return -1;
 }
 
-/**
- * Calculates the parameter offset for an instruction
- * This is more complex with segmented memory since we need to translate addresses
- *
- * @param mainMemory The system's main memory
- * @param segmentTableAddress Address of the segment table
- * @param instrBase Logical base address of instructions
- * @param currentInstructionIndex Current instruction index
- * @return Parameter offset or -1 if an error occurs
- */
 int calculateParamOffset(const vector<int>& mainMemory, int segmentTableAddress,
                          int instrBase, int currentInstructionIndex) {
     int offset = 0;
@@ -200,18 +155,7 @@ int calculateParamOffset(const vector<int>& mainMemory, int segmentTableAddress,
     return offset;
 }
 
-//======================================================
-// MEMORY MANAGEMENT FUNCTIONS
-//======================================================
 
-/**
- * Allocates a contiguous block for the segment table
- *
- * @param memoryList The linked list of memory blocks
- * @param process The process needing allocation
- * @param tableAddress Will be set to the address of allocated table
- * @return True if allocation succeeded
- */
 bool allocateSegmentTable(list<MemoryBlock>& memoryList, PCB& process, int& tableAddress) {
     // Need at least 13 contiguous integers for segment table (supports up to 6 segments)
     const int MIN_SEGMENT_TABLE_SIZE = 13;
@@ -238,6 +182,8 @@ bool allocateSegmentTable(list<MemoryBlock>& memoryList, PCB& process, int& tabl
 
             // Mark block as allocated
             it->processID = process.processID;
+            process.mainMemoryBase = tableAddress;  // Update PCB with segment table address
+
             return true;
         }
     }
@@ -247,15 +193,7 @@ bool allocateSegmentTable(list<MemoryBlock>& memoryList, PCB& process, int& tabl
     return false;
 }
 
-/**
- * Allocates multiple segments for a process
- *
- * @param memoryList The linked list of memory blocks
- * @param process The process needing allocation
- * @param segmentTableAddress Address of the segment table
- * @param segments Will be filled with allocated (start, size) pairs
- * @return True if allocation succeeded
- */
+
 bool allocateSegments(list<MemoryBlock>& memoryList, PCB& process, int segmentTableAddress,
                       vector<pair<int,int>>& segments) {
     int totalNeeded = process.maxMemoryNeeded;
@@ -314,74 +252,50 @@ bool allocateSegments(list<MemoryBlock>& memoryList, PCB& process, int segmentTa
     return true;
 }
 
-/**
- * Initialize the segment table in memory
- *
- * @param mainMemory The system's main memory
- * @param tableAddress Address of the segment table
- * @param segments List of (start, size) pairs for segments
- */
-void initializeSegmentTable(vector<int>& mainMemory, int tableAddress,
+
+// Replace your existing setupPCB and initializeSegmentTable functions with this combined function:
+void setupSegmentTableAndPCB(PCB& process, vector<int>& mainMemory, int segmentTableAddress,
                             const vector<pair<int,int>>& segments) {
-    // Write segment table size (2 * number of segments)
+    // First, set up segment table
     int segmentTableSize = segments.size() * 2;
-    mainMemory[tableAddress] = segmentTableSize;
+    mainMemory[segmentTableAddress] = segmentTableSize;
 
     // Write segment entries
     for (int i = 0; i < segments.size(); i++) {
-        mainMemory[tableAddress + 1 + 2*i] = segments[i].first;      // Start address
-        mainMemory[tableAddress + 1 + 2*i + 1] = segments[i].second;  // Size
+        mainMemory[segmentTableAddress + 1 + 2*i] = segments[i].first;      // Start address
+        mainMemory[segmentTableAddress + 1 + 2*i + 1] = segments[i].second;  // Size
     }
-}
 
-/**
- * Setup PCB fields in memory
- *
- * @param process The process being loaded
- * @param mainMemory The system's main memory
- * @param segmentTableAddress Address of the segment table
- */
-void setupPCB(PCB& process, vector<int>& mainMemory, int segmentTableAddress) {
-    int segmentTableSize = mainMemory[segmentTableAddress];
-    int pcbStartOffset = segmentTableSize + 1;
-
-    // Write PCB fields after segment table
-    mainMemory[segmentTableAddress + pcbStartOffset + 0] = process.processID;
-    mainMemory[segmentTableAddress + pcbStartOffset + 1] = READY;  // state
-    mainMemory[segmentTableAddress + pcbStartOffset + 2] = 0;      // programCounter
-
-    // Calculate logical bases for instructions and data
-    int totalPCBSize = 10;  // All PCB fields excluding segment table
-    int instrBase = pcbStartOffset + totalPCBSize;
-    int dataBase = instrBase + process.instructions.size();
-
-    mainMemory[segmentTableAddress + pcbStartOffset + 3] = instrBase;
-    mainMemory[segmentTableAddress + pcbStartOffset + 4] = dataBase;
-    mainMemory[segmentTableAddress + pcbStartOffset + 5] = process.memoryLimit;
-    mainMemory[segmentTableAddress + pcbStartOffset + 6] = 0;      // cpuCyclesUsed
-    mainMemory[segmentTableAddress + pcbStartOffset + 7] = 0;      // registerValue
-    mainMemory[segmentTableAddress + pcbStartOffset + 8] = process.maxMemoryNeeded;
-    mainMemory[segmentTableAddress + pcbStartOffset + 9] = segmentTableAddress;  // mainMemoryBase
-}
-
-/**
- * Load process content (instructions and data) into allocated segments
- *
- * @param process The process being loaded
- * @param mainMemory The system's main memory
- * @param segmentTableAddress Address of the segment table
- */
-void loadProcessContent(PCB& process, vector<int>& mainMemory, int segmentTableAddress) {
-    int segmentTableSize = mainMemory[segmentTableAddress];
+    // Calculate PCB offset (starts right after segment table)
     int pcbOffset = segmentTableSize + 1;
 
-    // Get logical bases for instructions and data
-    int instrBase = mainMemory[segmentTableAddress + pcbOffset + 3];
-    int dataBase = mainMemory[segmentTableAddress + pcbOffset + 4];
+    // Calculate logical addresses for instructions and data
+    int instrLogicalBase = pcbOffset + 10; // After PCB fields
+    int dataLogicalBase = instrLogicalBase + process.instructions.size();
 
-    // Load instructions
+    // Store PCB fields after segment table
+    mainMemory[segmentTableAddress + pcbOffset + 0] = process.processID;
+    mainMemory[segmentTableAddress + pcbOffset + 1] = READY;  // state
+    mainMemory[segmentTableAddress + pcbOffset + 2] = 0;      // programCounter
+    mainMemory[segmentTableAddress + pcbOffset + 3] = instrLogicalBase;
+    mainMemory[segmentTableAddress + pcbOffset + 4] = dataLogicalBase;
+    mainMemory[segmentTableAddress + pcbOffset + 5] = process.memoryLimit;
+    mainMemory[segmentTableAddress + pcbOffset + 6] = 0;      // cpuCyclesUsed
+    mainMemory[segmentTableAddress + pcbOffset + 7] = 0;      // registerValue
+    mainMemory[segmentTableAddress + pcbOffset + 8] = process.maxMemoryNeeded;
+    mainMemory[segmentTableAddress + pcbOffset + 9] = segmentTableAddress;  // mainMemoryBase
+
+    // Update process structure
+    process.instructionBase = instrLogicalBase;
+    process.dataBase = dataLogicalBase;
+    process.mainMemoryBase = segmentTableAddress;
+}
+
+
+void loadProcessContent(PCB& process, vector<int>& mainMemory, int segmentTableAddress) {
+    // Load instructions directly after PCB fields
     for (int i = 0; i < process.instructions.size(); i++) {
-        int logicalAddr = instrBase + i;
+        int logicalAddr = process.instructionBase + i;
         int physicalAddr = translateAddress(logicalAddr, segmentTableAddress, mainMemory);
 
         if (physicalAddr != -1) {
@@ -393,7 +307,7 @@ void loadProcessContent(PCB& process, vector<int>& mainMemory, int segmentTableA
     int dataOffset = 0;
     for (auto& instr : process.instructions) {
         for (int param : instr.parameters) {
-            int logicalAddr = dataBase + dataOffset++;
+            int logicalAddr = process.dataBase + dataOffset++;
             int physicalAddr = translateAddress(logicalAddr, segmentTableAddress, mainMemory);
 
             if (physicalAddr != -1) {
@@ -403,13 +317,7 @@ void loadProcessContent(PCB& process, vector<int>& mainMemory, int segmentTableA
     }
 }
 
-/**
- * Release all memory segments of a process
- *
- * @param memoryList The linked list of memory blocks
- * @param processID ID of the process to release
- * @param mainMemory The system's main memory
- */
+
 void releaseProcessMemory(list<MemoryBlock>& memoryList, int processID, vector<int>& mainMemory) {
     for (auto it = memoryList.begin(); it != memoryList.end(); ++it) {
         if (it->processID == processID) {
@@ -429,18 +337,7 @@ void releaseProcessMemory(list<MemoryBlock>& memoryList, int processID, vector<i
     coalesceMemory(memoryList);
 }
 
-//======================================================
-// PROCESS LOADING AND EXECUTION FUNCTIONS
-//======================================================
 
-/**
- * Try to load processes from NewJobQueue into memory using segmented allocation
- *
- * @param newJobQueue Queue of processes waiting to be loaded
- * @param readyQueue Queue of processes ready to execute
- * @param mainMemory The system's main memory
- * @param memoryList List of memory blocks (both allocated and free)
- */
 void tryLoadJobsToMemory(queue<PCB>& newJobQueue, queue<int>& readyQueue,
                          vector<int>& mainMemory, list<MemoryBlock>& memoryList) {
     bool jobLoaded;
@@ -452,16 +349,13 @@ void tryLoadJobsToMemory(queue<PCB>& newJobQueue, queue<int>& readyQueue,
 
         PCB currentProcess = newJobQueue.front();
 
-        // Step 1: Coalesce memory to maximize space
-        coalesceMemory(memoryList);
-
-        // Step 2: Try to allocate segment table
+        // Try to allocate segment table
         int segmentTableAddress;
         if (!allocateSegmentTable(memoryList, currentProcess, segmentTableAddress)) {
             break;  // Can't allocate segment table
         }
 
-        // Step 3: Try to allocate segments
+        // Try to allocate segments
         vector<pair<int,int>> segments;
         if (!allocateSegments(memoryList, currentProcess, segmentTableAddress, segments)) {
             // Free segment table
@@ -472,18 +366,33 @@ void tryLoadJobsToMemory(queue<PCB>& newJobQueue, queue<int>& readyQueue,
                 }
             }
 
-            cout << "Process " << currentProcess.processID
-                 << " waiting in NewJobQueue due to insufficient memory." << endl;
-            break;
+            // Before giving up, try memory coalescing
+            cout << "Insufficient memory for Process " << currentProcess.processID
+                 << ". Attempting memory coalescing." << endl;
+
+            if (coalesceMemory(memoryList)) {
+                // Try again after coalescing
+                if (allocateSegmentTable(memoryList, currentProcess, segmentTableAddress) &&
+                    allocateSegments(memoryList, currentProcess, segmentTableAddress, segments)) {
+                    // Coalescing helped, continue with loading
+                } else {
+                    // Still not enough memory
+                    cout << "Process " << currentProcess.processID
+                         << " waiting in NewJobQueue due to insufficient memory." << endl;
+                    break;
+                }
+            } else {
+                // No coalescing possible
+                cout << "Process " << currentProcess.processID
+                     << " waiting in NewJobQueue due to insufficient memory." << endl;
+                break;
+            }
         }
 
-        // Step 4: Initialize segment table
-        initializeSegmentTable(mainMemory, segmentTableAddress, segments);
+        // Set up segment table and PCB in one step
+        setupSegmentTableAndPCB(currentProcess, mainMemory, segmentTableAddress, segments);
 
-        // Step 5: Setup PCB
-        setupPCB(currentProcess, mainMemory, segmentTableAddress);
-
-        // Step 6: Load process content
+        // Load process content
         loadProcessContent(currentProcess, mainMemory, segmentTableAddress);
 
         // Success - move to ready queue
@@ -499,14 +408,6 @@ void tryLoadJobsToMemory(queue<PCB>& newJobQueue, queue<int>& readyQueue,
     } while (jobLoaded);
 }
 
-/**
- * Checks the I/O waiting queue and moves processes that have completed
- * their I/O wait time back to the ready queue
- *
- * @param ioWaitingQueue Queue of processes waiting for I/O
- * @param readyQueue Queue of processes ready to execute
- * @param mainMemory The system's main memory
- */
 void checkIOWaitingQueue(queue<IOProcess>& ioWaitingQueue, queue<int>& readyQueue, vector<int>& mainMemory) {
     const int queueSize = ioWaitingQueue.size();
 
@@ -541,17 +442,7 @@ void checkIOWaitingQueue(queue<IOProcess>& ioWaitingQueue, queue<int>& readyQueu
     }
 }
 
-/**
- * Executes a process on the CPU
- * Modified to handle segmented memory and address translation
- *
- * @param segmentTableAddress Address of the process's segment table
- * @param mainMemory The system's main memory
- * @param readyQueue Queue of processes ready to execute
- * @param ioWaitingQueue Queue of processes waiting for I/O
- * @param memoryList List of memory blocks
- * @param newJobQueue Queue of processes waiting to be loaded
- */
+
 void executeCPU(int segmentTableAddress, vector<int>& mainMemory, queue<int>& readyQueue,
                 queue<IOProcess>& ioWaitingQueue, list<MemoryBlock>& memoryList,
                 queue<PCB>& newJobQueue) {
@@ -568,6 +459,7 @@ void executeCPU(int segmentTableAddress, vector<int>& mainMemory, queue<int>& re
     process.instructionBase = mainMemory[segmentTableAddress + pcbOffset + 3];  // Logical base
     process.dataBase = mainMemory[segmentTableAddress + pcbOffset + 4];         // Logical base
     process.memoryLimit = mainMemory[segmentTableAddress + pcbOffset + 5];
+    process.maxMemoryNeeded = mainMemory[segmentTableAddress + pcbOffset + 8];
 
     // Set state to RUNNING
     process.state = RUNNING;
@@ -690,6 +582,10 @@ void executeCPU(int segmentTableAddress, vector<int>& mainMemory, queue<int>& re
                 // Translate store address
                 int physicalStoreAddr = translateAddress(logicalStoreAddr, segmentTableAddress, mainMemory);
 
+                // Print address translation for store instruction
+                cout << "Logical address " << logicalStoreAddr << " translated to physical address "
+                     << physicalStoreAddr << " for Process " << process.processID << endl;
+
                 if (physicalStoreAddr != -1) {
                     // Update memory and register
                     mainMemory[physicalStoreAddr] = value;
@@ -713,6 +609,10 @@ void executeCPU(int segmentTableAddress, vector<int>& mainMemory, queue<int>& re
 
                 // Translate load address
                 int physicalLoadAddr = translateAddress(logicalLoadAddr, segmentTableAddress, mainMemory);
+
+                // Print address translation for load instruction
+                cout << "Logical address " << logicalLoadAddr << " translated to physical address "
+                     << physicalLoadAddr << " for Process " << process.processID << endl;
 
                 if (physicalLoadAddr != -1) {
                     // Load value into register
@@ -762,23 +662,23 @@ void executeCPU(int segmentTableAddress, vector<int>& mainMemory, queue<int>& re
         processEndTimes[process.processID] = globalClock;
         int execTime = processEndTimes[process.processID] - processStartTimes[process.processID];
 
-        // Print PCB information
+        // Print PCB information - using logical addresses for PC, InstructionBase, and DataBase
         cout << "Process ID: " << process.processID << "\n";
         cout << "State: TERMINATED\n";
-        cout << "Program Counter: " << programCounter << "\n";
-        cout << "Instruction Base: " << process.instructionBase << "\n";
-        cout << "Data Base: " << process.dataBase << "\n";
+        cout << "Program Counter: " << programCounter << "\n";  // Logical address
+        cout << "Instruction Base: " << process.instructionBase << "\n";  // Logical address
+        cout << "Data Base: " << process.dataBase << "\n";  // Logical address
         cout << "Memory Limit: " << process.memoryLimit << "\n";
         cout << "CPU Cycles Used: " << process.cpuCyclesUsed << "\n";
         cout << "Register Value: " << process.registerValue << "\n";
         cout << "Max Memory Needed: " << process.maxMemoryNeeded << "\n";
-        cout << "Main Memory Base: " << process.mainMemoryBase << "\n";
-        cout << "Total CPU Cycles Consumed: " << process.cpuCyclesUsed << "\n";
+        cout << "Main Memory Base: " << segmentTableAddress << "\n";
+        cout << "Total CPU Cycles Consumed: " << execTime << "\n";
 
         // Print termination summary
         cout << "Process " << process.processID << " terminated. Entered running state at: "
              << processStartTimes[process.processID] << ". Terminated at: "
-             << processEndTimes[process.processID] << ". Total execution time: "
+             << processEndTimes[process.processID] << ". Total Execution Time: "
              << execTime << ".\n";
 
         // Release memory segments
@@ -895,8 +795,6 @@ int main() {
 
         // Step 2: Try to load more jobs if ready queue is empty
         if (readyQueue.empty() && !newJobQueue.empty()) {
-            // First try coalescing memory to maximize available space
-            coalesceMemory(memoryList);
             tryLoadJobsToMemory(newJobQueue, readyQueue, mainMemory, memoryList);
         }
 
