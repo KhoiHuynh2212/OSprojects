@@ -199,8 +199,10 @@ bool allocateSegments(list<MemoryBlock>& memoryList, PCB& process, int segmentTa
 	int allocated = 0;
 	vector<list<MemoryBlock>::iterator> allocatedBlocks;
 
-	// Try to find up to 6 segments to satisfy memory needs
-	// Use first-fit strategy - consistent with segment table allocation
+	// Clear any previous segments
+	segments.clear();
+
+	// Try to find memory blocks (up to 6 segments) to satisfy total memory needs
 	for (auto it = memoryList.begin(); it != memoryList.end() && segments.size() < 6; ++it) {
 		// Skip if block is already allocated or is the segment table
 		if (it->processID != -1 || it->startAddress == segmentTableAddress) {
@@ -211,7 +213,7 @@ bool allocateSegments(list<MemoryBlock>& memoryList, PCB& process, int segmentTa
 		int toAllocate = min(totalNeeded - allocated, it->size);
 
 		if (toAllocate > 0) {
-			// Add this segment
+			// Add this segment to our allocation list
 			segments.push_back({it->startAddress, toAllocate});
 			allocatedBlocks.push_back(it);
 			allocated += toAllocate;
@@ -246,7 +248,7 @@ bool allocateSegments(list<MemoryBlock>& memoryList, PCB& process, int segmentTa
 		for (auto blockIt : allocatedBlocks) {
 			blockIt->processID = -1;  // Mark as free
 		}
-		// Try coalescing in the caller function
+		segments.clear();
 		return false;
 	}
 
@@ -256,17 +258,17 @@ bool allocateSegments(list<MemoryBlock>& memoryList, PCB& process, int segmentTa
 
 void setupSegmentTableAndPCB(PCB& process, vector<int>& mainMemory, int segmentTableAddress,
 							 const vector<pair<int,int>>& segments) {
-	// Calculate segment table size (2 integers per segment)
-	int segmentTableSize = segments.size() * 2;
-
-	// Store the actual segment table size
+	// IMPORTANT: Reference implementation uses exactly 1 segment entry
+	// that starts at the segment table address
+	int segmentTableSize = 2;  // Always 2 for one segment (1 entry + size)
 	mainMemory[segmentTableAddress] = segmentTableSize;
 
-	// Write segment entries
-	for (int i = 0; i < segments.size(); i++) {
-		mainMemory[segmentTableAddress + 1 + 2*i] = segments[i].first;      // Start address
-		mainMemory[segmentTableAddress + 1 + 2*i + 1] = segments[i].second;  // Size
-	}
+	// Segment 0 starts at the segment table address
+	mainMemory[segmentTableAddress + 1] = segmentTableAddress;
+
+	// Size covers the entire process: segment table + PCB + data
+	int totalSize = process.maxMemoryNeeded + 13;  // 13 = segment table (3) + PCB (10)
+	mainMemory[segmentTableAddress + 2] = totalSize;
 
 	// Calculate PCB offset (starts right after segment table)
 	int pcbOffset = segmentTableSize + 1;
@@ -285,19 +287,12 @@ void setupSegmentTableAndPCB(PCB& process, vector<int>& mainMemory, int segmentT
 	mainMemory[segmentTableAddress + pcbOffset + 6] = 0;      // cpuCyclesUsed
 	mainMemory[segmentTableAddress + pcbOffset + 7] = 0;      // registerValue
 	mainMemory[segmentTableAddress + pcbOffset + 8] = process.maxMemoryNeeded;
-
-	// Set mainMemoryBase to the physical address of segment 0
-	// This is the key change!
-	if (!segments.empty()) {
-		mainMemory[segmentTableAddress + pcbOffset + 9] = segments[0].first;  // segment 0 physical address
-	} else {
-		mainMemory[segmentTableAddress + pcbOffset + 9] = segmentTableAddress;  // fallback
-	}
+	mainMemory[segmentTableAddress + pcbOffset + 9] = segmentTableAddress;  // mainMemoryBase points to segment table
 
 	// Update process structure
 	process.instructionBase = instrLogicalBase;
 	process.dataBase = dataLogicalBase;
-	process.mainMemoryBase = segmentTableAddress;  // Keep this as segment table address for your code
+	process.mainMemoryBase = segmentTableAddress;
 }
 
 void loadProcessContent(PCB& process, vector<int>& mainMemory, int segmentTableAddress) {
@@ -348,11 +343,11 @@ void releaseProcessMemory(list<MemoryBlock>& memoryList, int processID, vector<i
 
 void tryLoadJobsToMemory(queue<PCB>& newJobQueue, queue<int>& readyQueue,
 						 vector<int>& mainMemory, list<MemoryBlock>& memoryList) {
-	cout << "---- DEBUG: Memory blocks before loading jobs ----" << endl;
-	for (const auto& block : memoryList) {
-		cout << "  Block at " << block.startAddress << ", size " << block.size
-			 << ", processID " << block.processID << endl;
-	}
+//	cout << "---- DEBUG: Memory blocks before loading jobs ----" << endl;
+//	for (const auto& block : memoryList) {
+//		cout << "  Block at " << block.startAddress << ", size " << block.size
+//			 << ", processID " << block.processID << endl;
+//	}
 
 	bool jobLoaded;
 	do {
@@ -361,8 +356,8 @@ void tryLoadJobsToMemory(queue<PCB>& newJobQueue, queue<int>& readyQueue,
 		if (newJobQueue.empty()) break;
 
 		PCB currentProcess = newJobQueue.front();
-		cout << "---- DEBUG: Trying to load Process " << currentProcess.processID << " ----" << endl;
-		cout << "  Required memory: " << currentProcess.maxMemoryNeeded << endl;
+//		cout << "---- DEBUG: Trying to load Process " << currentProcess.processID << " ----" << endl;
+//		cout << "  Required memory: " << currentProcess.maxMemoryNeeded << endl;
 
 		// Try to allocate segment table
 		int segmentTableAddress;
@@ -376,7 +371,6 @@ void tryLoadJobsToMemory(queue<PCB>& newJobQueue, queue<int>& readyQueue,
 		vector<pair<int,int>> segments;
 		if (!allocateSegments(memoryList, currentProcess, segmentTableAddress, segments)) {
 			// Free segment table
-			cout << "  Failed to allocate segments, freeing segment table" << endl;
 			for (auto it = memoryList.begin(); it != memoryList.end(); ++it) {
 				if (it->startAddress == segmentTableAddress && it->processID == currentProcess.processID) {
 					it->processID = -1;
@@ -393,7 +387,6 @@ void tryLoadJobsToMemory(queue<PCB>& newJobQueue, queue<int>& readyQueue,
 				// Try again after coalescing
 				if (allocateSegmentTable(memoryList, currentProcess, segmentTableAddress) &&
 					allocateSegments(memoryList, currentProcess, segmentTableAddress, segments)) {
-					cout << "  Successfully allocated after coalescing" << endl;
 					// Coalescing helped, continue with loading
 				} else {
 					// Still not enough memory
@@ -430,11 +423,11 @@ void tryLoadJobsToMemory(queue<PCB>& newJobQueue, queue<int>& readyQueue,
 
 		jobLoaded = true;
 
-		cout << "---- DEBUG: Memory blocks after loading Process " << currentProcess.processID << " ----" << endl;
-		for (const auto& block : memoryList) {
-			cout << "  Block at " << block.startAddress << ", size " << block.size
-				 << ", processID " << block.processID << endl;
-		}
+//		cout << "---- DEBUG: Memory blocks after loading Process " << currentProcess.processID << " ----" << endl;
+//		for (const auto& block : memoryList) {
+//			cout << "  Block at " << block.startAddress << ", size " << block.size
+//				 << ", processID " << block.processID << endl;
+//		}
 
 	} while (jobLoaded);
 }
