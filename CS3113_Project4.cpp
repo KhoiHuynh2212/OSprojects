@@ -158,7 +158,7 @@ int calculateParamOffset(const vector<int>& mainMemory, int segmentTableAddress,
 
 
 
-bool allocateSegments(list<MemoryBlock>& memoryList, PCB& process, int segmentTableAddress,
+bool allocateSegments(list<MemoryBlock>& memoryList, PCB& process, int& segmentTableAddress,
 					  vector<pair<int,int>>& segments) {
 	// Define constants for memory overhead components
 	const int PCB_SIZE = 10;
@@ -233,6 +233,7 @@ void setupSegmentTableAndPCB(PCB& process, vector<int>& mainMemory, int segmentT
     // First, set up segment table
     int segmentTableSize = segments.size() * 2;
     mainMemory[segmentTableAddress] = segmentTableSize;
+	process.mainMemoryBase = segmentTableAddress;
 
     // Write segment entries
 	for (int i = 0; i < segments.size(); i++) {
@@ -267,8 +268,6 @@ void setupSegmentTableAndPCB(PCB& process, vector<int>& mainMemory, int segmentT
     // Update process structure
 	process.instructionBase = instrBase;
 	process.dataBase = dataBase;
-	process.mainMemoryBase = segmentTableAddress;
-
 
 	// Use address translation to write instructions and data
 	for (int i = 0; i < process.numOfInstruction; i++) {
@@ -351,7 +350,7 @@ void tryLoadJobsToMemory(queue<PCB>& newJobQueue, queue<int>& readyQueue,
         PCB currentProcess = newJobQueue.front();
 
         // Try to allocate segment table
-        int segmentTableAddress;
+        int segmentTableAddress = 0;
 
         // Try to allocate segments
         vector<pair<int,int>> segments;
