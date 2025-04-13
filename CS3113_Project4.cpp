@@ -70,25 +70,32 @@ bool coalesceMemory(list<MemoryBlock>& memoryList) {
     bool coalesced = false;
     auto it = memoryList.begin();
 
+    memoryList.sort([](const MemoryBlock& a, const MemoryBlock& b) {
+        return a.startAddress < b.startAddress;
+    });
+
     while (it != memoryList.end()) {
         auto nextIt = next(it);
         if (nextIt == memoryList.end()) break;
 
         // Check if both blocks are free and adjacent
         if (it->processID == -1 && nextIt->processID == -1 && areAdjacent(*it, *nextIt)) {
+            int oldSize = it->size;
+            int nextSize = nextIt->size;
+            int oldStart = it->startAddress;
+            int nextStart = nextIt->startAddress;
+
             // Merge blocks
             it->size += nextIt->size;
             memoryList.erase(nextIt);
             coalesced = true;
-            // Try to merge with next block without advancing
+
         } else {
             ++it;
         }
     }
-
     return coalesced;
 }
-
 
 int translateAddress(int logicalAddress, int segmentTableAddress, vector<int>& mainMemory) {
     // Get segment table size and calculate number of segments
@@ -96,9 +103,13 @@ int translateAddress(int logicalAddress, int segmentTableAddress, vector<int>& m
     int numSegments = segmentTableSize / 2;
     int processID = mainMemory[segmentTableAddress + segmentTableSize + 1]; // Get PID for output
 
+
+    int pcbOffset = segmentTableSize + 1;
+    if (segmentTableAddress + pcbOffset < mainMemory.size()) {
+        processID = mainMemory[segmentTableAddress + pcbOffset];
+    }
     // Track remaining offset
     int remaining = logicalAddress;
-
     // Iterate through segments to find the right one
     for (int i = 0; i < numSegments; i++) {
         int startAddr = mainMemory[segmentTableAddress + 1 + 2*i];
@@ -159,71 +170,100 @@ int calculateParamOffset(const vector<int>& mainMemory, int segmentTableAddress,
 
 
 bool allocateSegments(list<MemoryBlock>& memoryList, PCB& process, int& segmentTableAddress,
-					  vector<pair<int,int>>& segments) {
-	// Define constants for memory overhead components
-	const int PCB_SIZE = 10;
-	const int SegmentTableSize = 13;
+                     vector<pair<int,int>>& segments) {
+    // Define constants for memory overhead components
+    const int PCB_SIZE = 10;
+    const int SegmentTableSize = 13; // Keeping your original value
 
-	// Total memory needed includes user memory and PCB (segment table already allocated)
-	// We don't add SEGMENT_TABLE_SIZE here because it's allocated separately
-	int totalNeeded = process.maxMemoryNeeded + PCB_SIZE + SegmentTableSize;
-	int remaining = totalNeeded;
-	vector<list<MemoryBlock>::iterator> allocatedBlocks;
+    // Calculate total memory needed
+    int totalNeeded = process.maxMemoryNeeded + PCB_SIZE + SegmentTableSize;
+    int remaining = totalNeeded;
 
-	// Try to find up to 6 segments to satisfy memory needs
-	for (auto it = memoryList.begin(); it != memoryList.end() && segments.size() < 6; ++it) {
-		if (it->processID == -1 && it->size > 0) {  // Free block
-			// How much we'll take from this block
-			int toAllocate = min(remaining, it->size);
+    
+    // First, sort memory blocks by address to ensure consistent allocation
+    memoryList.sort([](const MemoryBlock& a, const MemoryBlock& b) {
+        return a.startAddress < b.startAddress;
+    });
 
-			// If this is the first block, it will contain the segment table
-			if (segments.empty()) {
-				segmentTableAddress = it->startAddress;
-			}
 
-			// Record this segment (store physical address and size)
-			segments.push_back({it->startAddress, toAllocate});
-			remaining -= toAllocate;
+    bool segmentTableAllocated = false;
+    // First-fit allocation with explicit segment table address handling
+    segmentTableAddress = -1; // Reset to invalid value
 
-			// Split block if needed
-			if (toAllocate < it->size) {
-				MemoryBlock newBlock;
-				newBlock.processID = -1;  // Free
-				newBlock.startAddress = it->startAddress + toAllocate;
-				newBlock.size = it->size - toAllocate;
+    for (auto it = memoryList.begin(); it != memoryList.end() && segments.size() < 6 && remaining > 0; ++it) {
+        if (it->processID == -1 && it->size > 0) {  // Free block
+            // How much we'll take from this block
+            int toAllocate = min(remaining, it->size);
 
-				// Resize current block
-				it->size = toAllocate;
+            // If this is the first segment, explicitly set it as segment table
+            if (segments.empty()) {
+                segmentTableAddress = it->startAddress;
 
-				// Insert new block
-				memoryList.insert(next(it), newBlock);
-			}
+            }
 
-			// Mark as allocated
-			it->processID = process.processID;
+            if (!segmentTableAllocated) {
+                // Need at least enough space for segment table + PCB
+                if (it->size >= SegmentTableSize + PCB_SIZE) {
+                    segmentTableAddress = it->startAddress;
+                    segmentTableAllocated = true;
+                } else {
+                    continue;
+                }
+            }
 
-			// Check if we've allocated enough
-			if (remaining <= 0) {
-				break;
-			}
-		}
-	}
 
-	if (remaining > 0) {
-		// Not enough memory, release allocated blocks
-		for (auto& segment : segments) {
-			for (auto it = memoryList.begin(); it != memoryList.end(); ++it) {
-				if (it->startAddress == segment.first && it->processID == process.processID) {
-					it->processID = -1;  // Mark as free
-					break;
-				}
-			}
-		}
-		segments.clear();
-		return false;
-	}
-	// process.mainMemoryBase = segmentTableAddress;
-	return true;
+            // Record this segment
+            segments.push_back({it->startAddress, toAllocate});
+            remaining -= toAllocate;
+
+            // Split block if needed
+            if (toAllocate < it->size) {
+                MemoryBlock newBlock;
+                newBlock.processID = -1;  // Free
+                newBlock.startAddress = it->startAddress + toAllocate;
+                newBlock.size = it->size - toAllocate;
+
+                // Resize current block
+                it->size = toAllocate;
+
+                // Insert new block
+                memoryList.insert(next(it), newBlock);
+            }
+
+            // Mark as allocated
+            it->processID = process.processID;
+
+        }
+    }
+
+    if (remaining > 0) {
+        // Not enough memory, release allocated blocks
+
+        for (auto& segment : segments) {
+            for (auto it = memoryList.begin(); it != memoryList.end(); ++it) {
+                if (it->startAddress == segment.first && it->processID == process.processID) {
+                    it->processID = -1;  // Mark as free
+                    break;
+                }
+            }
+        }
+        segments.clear();
+        segmentTableAddress = -1; // Reset to invalid value
+        return false;
+    }
+
+    // Double check segment table address is valid
+    if (segmentTableAddress == -1 || segments.empty()) {
+
+        return false;
+    }
+
+    // Explicitly update process.mainMemoryBase
+    process.mainMemoryBase = segmentTableAddress;
+
+
+
+    return true;
 }
 
 
@@ -237,14 +277,7 @@ void setupSegmentTableAndPCB(PCB& process, vector<int>& mainMemory, int segmentT
 
     // Write segment entries
 	for (int i = 0; i < segments.size(); i++) {
-		if (i == 0) {
-			// For the first segment (segment 0), set the start address to 0
-			// (relative to the segment table address)
-			mainMemory[segmentTableAddress + 1 + 2*i] = segmentTableAddress;
-		} else {
-			// For other segments, use the actual physical address
-			mainMemory[segmentTableAddress + 1 + 2*i] = segments[i].first;
-		}
+		mainMemory[segmentTableAddress + 1 + 2*i] = segments[i].first;
 		mainMemory[segmentTableAddress + 1 + 2*i + 1] = segments[i].second;  // Size
 	}
 
@@ -263,7 +296,7 @@ void setupSegmentTableAndPCB(PCB& process, vector<int>& mainMemory, int segmentT
     mainMemory[segmentTableAddress + pcbOffset + 6] = 0;      // cpuCyclesUsed
     mainMemory[segmentTableAddress + pcbOffset + 7] = 0;      // registerValue
     mainMemory[segmentTableAddress + pcbOffset + 8] = process.maxMemoryNeeded;
-    mainMemory[segmentTableAddress + pcbOffset + 9] = process.mainMemoryBase;  // mainMemoryBase
+    mainMemory[segmentTableAddress + pcbOffset + 9] = segmentTableAddress;  // mainMemoryBase
 
     // Update process structure
 	process.instructionBase = instrBase;
@@ -319,13 +352,13 @@ void loadProcessContent(PCB& process, vector<int>& mainMemory, int segmentTableA
 
 
 void releaseProcessMemory(list<MemoryBlock>& memoryList, int processID, vector<int>& mainMemory) {
+
     for (auto it = memoryList.begin(); it != memoryList.end(); ++it) {
         if (it->processID == processID) {
             // Clear memory
             for (int i = 0; i < it->size; i++) {
                 mainMemory[it->startAddress + i] = -1;
             }
-
             // Mark block as free
             it->processID = -1;
         }
@@ -338,78 +371,94 @@ void releaseProcessMemory(list<MemoryBlock>& memoryList, int processID, vector<i
 }
 
 
-void tryLoadJobsToMemory(queue<PCB>& newJobQueue, queue<int>& readyQueue,
-                         vector<int>& mainMemory, list<MemoryBlock>& memoryList) {
-    bool jobLoaded;
+void tryLoadJobsToMemory(queue<PCB>& newJobQueue,
+						 queue<int>& readyQueue,
+						 vector<int>& mainMemory,
+						 list<MemoryBlock>& memoryList)
+{
+	while (!newJobQueue.empty()) {
+		PCB currentProcess = newJobQueue.front();
 
-    do {
-        jobLoaded = false;
+		int segmentTableAddress = 0;
+		vector<pair<int, int>> segments;
 
-        if (newJobQueue.empty()) break;
+		// Check if we have enough memory for at least segment table (size ≥ 13)
+		bool hasHoleForSegmentTable = false;
+		for (auto it = memoryList.begin(); it != memoryList.end(); ++it) {
+			if (it->processID == -1 && it->size >= 13) {
+				hasHoleForSegmentTable = true;
+				break;
+			}
+		}
 
-        PCB currentProcess = newJobQueue.front();
+		// -------------------- PASS #1 --------------------
+		// Attempt to allocate segments (segment table ≥ 13, plus other needs).
+		if (!allocateSegments(memoryList, currentProcess, segmentTableAddress, segments)) {
+			// Free partial allocations (if any).
+			for (auto it = memoryList.begin(); it != memoryList.end(); ++it) {
+				if (it->processID == currentProcess.processID) {
+					it->processID = -1;  // Mark that block as free again
+				}
+			}
 
-        // Try to allocate segment table
-        int segmentTableAddress = 0;
+			// Check if the issue is segment table size or overall memory
+			if (!hasHoleForSegmentTable) {
+				// No hole big enough for segment table (≥ 13)
+				cout << "Process " << currentProcess.processID
+					 << " could not be loaded due to insufficient contiguous "
+					 << "space for segment table." << endl;
+				break;
+			} else {
+				// Has hole for segment table but not enough total memory
+				cout << "Insufficient memory for Process "
+					 << currentProcess.processID
+					 << ". Attempting memory coalescing." << endl;
 
-        // Try to allocate segments
-        vector<pair<int,int>> segments;
-        if (!allocateSegments(memoryList, currentProcess, segmentTableAddress, segments)) {
-            // Free segment table
-            for (auto it = memoryList.begin(); it != memoryList.end(); ++it) {
-                if (it->startAddress == segmentTableAddress && it->processID == currentProcess.processID) {
-                    it->processID = -1;
-                    break;
-                }
-            }
+				// Attempt coalescing
+				if (coalesceMemory(memoryList)) {
+					// -------------------- PASS #2 --------------------
+					// If coalescing succeeded, try to allocate again
+					if (!allocateSegments(memoryList, currentProcess, segmentTableAddress, segments)) {
+						// Even after coalescing, still not enough memory
+						cout << "Process " << currentProcess.processID
+							 << " waiting in NewJobQueue due to insufficient memory." << endl;
+						break;
+					}
+				} else {
+					// If coalescing not possible
+					cout << "Process " << currentProcess.processID
+						 << " waiting in NewJobQueue due to insufficient memory." << endl;
+					break;
+				}
+			}
+		}
 
-            // Before giving up, try memory coalescing
-            cout << "Insufficient memory for Process " << currentProcess.processID
-                 << ". Attempting memory coalescing." << endl;
+		// ---- If we get here, segments were allocated successfully ----
+		setupSegmentTableAndPCB(currentProcess, mainMemory, segmentTableAddress, segments);
+		loadProcessContent(currentProcess, mainMemory, segmentTableAddress);
 
-            if (coalesceMemory(memoryList)) {
-                // Try again after coalescing
-                if (allocateSegments(memoryList, currentProcess, segmentTableAddress, segments)) {
-                    // Coalescing helped, continue with loading
-                } else {
-                    // Still not enough memory
-                    cout << "Process " << currentProcess.processID
-                         << " waiting in NewJobQueue due to insufficient memory." << endl;
-                    break;
-                }
-            } else {
-                // No coalescing possible
-                cout << "Process " << currentProcess.processID
-                     << " waiting in NewJobQueue due to insufficient memory." << endl;
-                break;
-            }
-        }
+		cout << "Process " << currentProcess.processID
+			 << " loaded with segment table stored at physical address "
+			 << segmentTableAddress << endl;
 
-        // Set up segment table and PCB in one step
-        setupSegmentTableAndPCB(currentProcess, mainMemory, segmentTableAddress, segments);
-
-        // Load process content
-        loadProcessContent(currentProcess, mainMemory, segmentTableAddress);
-
-        // Success - move to ready queue
-        newJobQueue.pop();
-        readyQueue.push(segmentTableAddress);
-
-        cout << "Process " << currentProcess.processID
-             << " loaded with segment table stored at physical address "
-             << segmentTableAddress << endl;
-
-        jobLoaded = true;
-
-    } while (jobLoaded);
+		// Remove from newJobQueue and push to readyQueue
+		newJobQueue.pop();
+		readyQueue.push(segmentTableAddress);
+	}
 }
 
 void checkIOWaitingQueue(queue<IOProcess>& ioWaitingQueue, queue<int>& readyQueue, vector<int>& mainMemory) {
+    if (ioWaitingQueue.empty()) return;
     const int queueSize = ioWaitingQueue.size();
 
     for (int i = 0; i < queueSize; i++) {
         IOProcess ioProc = ioWaitingQueue.front();
         ioWaitingQueue.pop();
+
+
+        if (ioProc.procAddr < 0 || ioProc.procAddr >= mainMemory.size()) {
+            continue;
+        }
 
         // Get segment table size and PCB offset
         int segmentTableSize = mainMemory[ioProc.procAddr];
