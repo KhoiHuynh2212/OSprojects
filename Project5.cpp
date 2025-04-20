@@ -19,6 +19,9 @@ struct ThreadArg {
 	int startIndex;
 	int endIndex;
 
+	// Pointers to shared data
+	vector<int>* input_array;
+	vector<int>* results;
 
 	// computation phase synchronization
 	pthread_mutex_t compute_mutex;
@@ -36,68 +39,127 @@ struct ThreadArg {
 	int rightChildIndex;        // Index of right child (-1 if none)
 };
 
-void initThreadArgs(ThreadArg * args, int totalThreads, int height,int *inputArray, int *results,int arraySize) {
 
-}
+void* computeSum(void* arg);
 
 
 int main() {
 	// Step 1: Read inputs
 	int H, M;
 	cin >> H >> M;
+
 	// Step 2: Compute tree parameters
-
-	int N = pow(2,H-1);
-	int M_prime = M;
-
-	if(M % N != 0) {
-		M_prime =  M + (N - (M % N));
+	vector<int>inputArray(M);
+	for (int i = 0; i < M; i++) {
+		cin >> inputArray[i];
 	}
 
-	int chunkSize = M_prime/N;
-	int totalThreads = pow(2,H) -1;
+	int N = 1 << (H - 1);
+	int padding = (N - (M % N)) % N;
+	int m_Prime = padding + M;
+	if(M % N != 0) {
+		inputArray.resize(m_Prime,0); // pad input array with zeros
+	}
+
+	int chunkSize = m_Prime / N;
+	int totalThreads = (1 << H) - 1;
 
 	// Step 3: Allocate arrays
-	std::vector<ThreadArg> threadArgs(totalThreads);
-	std::vector<int> results(totalThreads, 0);
-	std::vector<int> input(M_prime, 0);
+	vector<ThreadArg> threadArgs(totalThreads);
+	vector<int> results(totalThreads, 0);
+	// Step 4: Initialize each thread's data
+	for(int i = 0; i < totalThreads - 1; ++i) {
+		ThreadArg &t = threadArgs[i];
 
-	// Read input array
-	std::cout << "Enter " << M << " integers:" << std::endl;
-	for (int i = 0; i < M; i++) {
-		std::cin >> input[i];
+		// Compute level and position
+		t.level = static_cast<int>(std::floor(std::log2(i + 1)));
+		int firstAtLevel = (1 << t.level) - 1;
+		t.position = i - firstAtLevel;
+
+        // Set up pointers to shared data
+		t.input_array = &inputArray;
+		t.results = &results;
+
+		t.isLeaf = (t.level == H - 1);
+
+		if(t.isLeaf) {
+			t.startIndex = t.position * chunkSize;
+			t.endIndex = t.startIndex + chunkSize;
+		}
+
+		// 6) init compute‑phase sync
+		t.compute_ready = false;
+		pthread_mutex_init(&t.compute_mutex, nullptr);
+		pthread_cond_init (&t.compute_cond,  nullptr);
+
+		// 7) init terminate‑phase sync
+		t.terminate_ready = false;
+		pthread_mutex_init(&t.terminate_mutex, nullptr);
+		pthread_cond_init (&t.terminate_cond,  nullptr);
+
+		// 8) parent & children
+		t.parentIndex = (i == 0 ? -1 : (i - 1) / 2);
+		int left  = 2 * i + 1;
+		int right = 2 * i + 2;
+		t.leftChildIndex  = (left  < totalThreads ? left  : -1);
+		t.rightChildIndex = (right < totalThreads ? right : -1);
 	}
 
 
-	// Step 4: Initialize each thread's data
-	// - For each index i in 0 to totalThreads - 1:
-	// - Compute level and position
-	// - Assign index, level, position
-	// - Assign array, results pointers
-	// - For leaf threads:
-	// - Set isLeaf = true
-	// - Assign start and end indices in input array
-	// - Initialize mutexes and condition variables
+
 	// Step 5: Create all threads (loop)
-	// - For each index i, call pthread_create(&threadArgs[i].thread, ...,
-	//computeSum, &threadArgs[i])
+	for(int i = 0; i < totalThreads;i++) {
+		pthread_create( &threadArgs[i].thread,
+						nullptr,
+						computeSum,              // your worker
+						&threadArgs[i]);
+	}
+
 	// Step 6: Trigger leaf threads to begin computation
-	// - For each leaf thread (index from 2^(H-1)-1 to 2^H-2):
-	// - Lock compute_mutex
-	// - Set compute_ready = true
-	// - Signal compute_cond
-	// - Unlock compute_mutex
+	int firstLeaf = (1 << (H-1)) - 1;
+	int lastLeaf  = (1 << H) - 2;
+
+	for (int i = firstLeaf; i <= lastLeaf; ++i) {
+		ThreadArg &leaf = threadArgs[i];
+		pthread_mutex_lock(&leaf.compute_mutex);
+		leaf.compute_ready = true;
+		pthread_cond_signal(&leaf.compute_cond);
+		pthread_mutex_unlock(&leaf.compute_mutex);
+	}
 	// Step 7: Wait for root thread to finish computation
-	// - Wait on a condition variable OR
-	// - Use polling to detect when result[0] is ready
+	{
+		ThreadArg &root = threadArgs[0];
+		pthread_mutex_lock(&root.compute_mutex);
+		while (!root.compute_ready) {
+			pthread_cond_wait(&root.compute_cond, &root.compute_mutex);
+		}
+		pthread_mutex_unlock(&root.compute_mutex);
+	}
 	// Step 8: Trigger root thread to begin termination
-	// - Lock terminate_mutex for root
-	// - Set terminate_ready = true
-	// - Signal terminate_cond
-	// - Unlock terminate_mutex
+	{
+		ThreadArg &root = threadArgs[0];
+		pthread_mutex_lock(&root.terminate_mutex);
+		root.terminate_ready = true;
+		pthread_cond_signal(&root.terminate_cond);
+		pthread_mutex_unlock(&root.terminate_mutex);
+	}
 	// Step 9: Join all threads
 	// - For all threads in threadArgs, call pthread_join
+
+	for (int i = 0; i < totalThreads; ++i) {
+		pthread_join(threadArgs[i].thread, nullptr);
+	}
 	// Step 10: Destroy mutexes and condition variables
-	// - For each threadArg, destroy compute/terminate mutexes and conds
+	// - For each threadArg, destroy compute/terminate mutexes and conds.
+	for (int i = 0; i < totalThreads; ++i) {
+		ThreadArg &t = threadArgs[i];
+		pthread_mutex_destroy(&t.compute_mutex);
+		pthread_cond_destroy (&t.compute_cond);
+		pthread_mutex_destroy(&t.terminate_mutex);
+		pthread_cond_destroy (&t.terminate_cond);
+	}
+
+    // Finally, print your result
+	std::cout << "Total sum = " << results[0] << std::endl;
 	return 0;
 }
