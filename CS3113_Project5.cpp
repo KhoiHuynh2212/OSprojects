@@ -40,7 +40,7 @@ struct ThreadArg {
 	int rightChildIndex;        // Index of right child (-1 if none)
 };
 
-
+pthread_mutex_t cout_mutex = PTHREAD_MUTEX_INITIALIZER;
 void* computeSum(void* arg) {
 	auto* t = static_cast<ThreadArg *>(arg);
 	ThreadArg* base_threads = t->all_threads;  // Get base array pointer
@@ -62,9 +62,12 @@ void* computeSum(void* arg) {
 		(*t->results)[t->index] = sum;
 
 		// Print computation information
+		// For leaf thread output
+		pthread_mutex_lock(&cout_mutex);
 		cout << "[Thread Index " << t->index << "] [Level " << t->level
 			 << ", Position " << t->position << "] [TID " << pthread_self()
 			 << "] computed leaf sum: " << sum << endl;
+		pthread_mutex_unlock(&cout_mutex);
 
 		if (t->parentIndex >= 0) {
 			ThreadArg* parent = &base_threads[t->parentIndex];
@@ -99,32 +102,30 @@ void* computeSum(void* arg) {
 		(*t->results)[t->index] = sum;
 
 		// Print information - exactly matching your original format
+		pthread_mutex_lock(&cout_mutex);
 		cout << "[Thread Index " << t->index << "] [Level " << t->level
 			 << ", Position " << t->position << "] [TID " << pthread_self()
-			 << "] received:" << endl;
+			 << "] received: " << endl;
+		pthread_mutex_unlock(&cout_mutex);
 
 		ThreadArg* leftChild = &base_threads[t->leftChildIndex];
 		ThreadArg* rightChild = &base_threads[t->rightChildIndex];
 
-		cout << " Left child [Index " << t->leftChildIndex << ", Level "
-		   << leftChild->level << ", Pos " << leftChild->position
+		cout << "Left Child [Index " << t->leftChildIndex << ", Level "
+		   << leftChild->level << ", Position " << leftChild->position
 		   << ", TID " << leftChild->thread << "]: " << leftResult << endl;
 
-		cout << " Right child [Index " << t->rightChildIndex << ", Level "
-			 << rightChild->level << ", Pos " << rightChild->position
+		cout << "Right Child [Index " << t->rightChildIndex << ", Level "
+			 << rightChild->level << ", Position " << rightChild->position
 			 << ", TID " << rightChild->thread << "]: " << rightResult << endl;
 
+
+		// Replace your current sum printing with:
 		if (t->index == 0) {
 			cout << "[Thread Index " << t->index << "] computed final sum: " << sum << endl;
-			cout << "[Thread Index " << t->index << "] now initiates tree cleanup:" << endl;
-
-			cout << " - Terminates Left child [Thread Index " << t->leftChildIndex
-			<< "], which terminates its own children [ " << 2 * t->leftChildIndex + 1 << ", " << 2 * t->leftChildIndex + 2<< "]" << endl;
-
-			cout << " - Terminates Right child [Thread Index " << t->rightChildIndex
-				 << "], which terminates its own children [ " << 2 * t->rightChildIndex + 1 << ", " << 2 * t->rightChildIndex + 2<< "]" << endl;
-
-			cout << "Thread termination log:" << endl;
+			cout << endl;
+			cout << "[Thread Index " << t->index << "] now initiates tree cleanup." << endl;
+			cout << endl;
 		} else {
 			cout << "[Thread Index " << t->index << "] computed sum: " << sum << endl;
 		}
@@ -139,8 +140,7 @@ void* computeSum(void* arg) {
 		}
 	}
 
-	// PHASE 2: Controlled Termination
-	// Wait for termination signal
+	// Phase 2 : Termination
 	pthread_mutex_lock(&t->terminate_mutex);
 	while (!t->terminate_ready) {
 		pthread_cond_wait(&t->terminate_cond, &t->terminate_mutex);
@@ -148,31 +148,45 @@ void* computeSum(void* arg) {
 	pthread_mutex_unlock(&t->terminate_mutex);
 
 	if (!t->isLeaf) {
+		// First terminate left child
 		if (t->leftChildIndex >= 0) {
 			ThreadArg* leftChild = &base_threads[t->leftChildIndex];
 			pthread_mutex_lock(&leftChild->terminate_mutex);
-			leftChild->terminate_ready = true;  // Fixed: set child's flag
+			leftChild->terminate_ready = true;
 			pthread_cond_signal(&leftChild->terminate_cond);
 			pthread_mutex_unlock(&leftChild->terminate_mutex);
 
-			// wait for left child to terminate
+			// Wait for left child to terminate
 			pthread_join(leftChild->thread, nullptr);
 		}
 
+		// Print root termination message
+		pthread_mutex_lock(&cout_mutex);
+		cout << "[Thread Index " << t->index << "] [Level " << t->level
+			 << ", Position " << t->position << "] terminated." << endl;
+		pthread_mutex_unlock(&cout_mutex);
+
+		// Then terminate right child
 		if (t->rightChildIndex >= 0) {
 			ThreadArg* rightChild = &base_threads[t->rightChildIndex];
 			pthread_mutex_lock(&rightChild->terminate_mutex);
-			rightChild->terminate_ready = true;  // Fixed: set child's flag
+			rightChild->terminate_ready = true;
 			pthread_cond_signal(&rightChild->terminate_cond);
 			pthread_mutex_unlock(&rightChild->terminate_mutex);
 
-			// wait for right child to terminate
+			// Wait for right child to terminate
 			pthread_join(rightChild->thread, nullptr);
 		}
-	}
 
-	cout << "[Thread Index " << t->index << "] [Level " << t->level
-		<< ", Position " << t->position << "] terminated." << endl;
+		// We've already printed the termination message, so return
+		return nullptr;
+	} else {
+		// For leaf nodes, just print termination message
+		pthread_mutex_lock(&cout_mutex);
+		cout << "[Thread Index " << t->index << "] [Level " << t->level
+			 << ", Position " << t->position << "] terminated." << endl;
+		pthread_mutex_unlock(&cout_mutex);
+	}
 
 	return nullptr;
 }
@@ -223,10 +237,18 @@ int main() {
 		if(t.isLeaf) {
 			int leafIndex = i - ((1 << (H-1)) - 1); // Convert thread index to leaf position (j)
 			t.startIndex = leafIndex * chunkSize;
-			t.endIndex = (leafIndex + 1) + chunkSize - 1;
-
-			if (t.endIndex >= m_Prime) {
-				t.endIndex = m_Prime - 1;
+			t.endIndex = (leafIndex + 1) * chunkSize - 1;
+			// Special handling for uneven distribution
+			if (leafIndex == 0) {
+				// First leaf gets ceiling(M/N) elements
+				int firstChunkSize = (M + N - 1) / N;  // Ceiling division
+				t.startIndex = 0;
+				t.endIndex = firstChunkSize - 1;
+			} else {
+				// Other leaves divide the remaining elements
+				int firstChunkSize = (M + N - 1) / N;  // Ceiling division
+				t.startIndex = firstChunkSize;
+				t.endIndex = M - 1;
 			}
 		}
 
@@ -301,7 +323,5 @@ int main() {
 		pthread_cond_destroy(&t.terminate_cond);
 	}
 
-    // Finally, print your result
-	std::cout << "Total sum = " << results[0] << std::endl;
 	return 0;
 }
