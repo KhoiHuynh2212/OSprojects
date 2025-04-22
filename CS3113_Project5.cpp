@@ -61,7 +61,6 @@ void* computeSum(void* arg) {
 		}
 		(*t->results)[t->index] = sum;
 
-		// Print computation information
 		// For leaf thread output
 		pthread_mutex_lock(&cout_mutex);
 		cout << "[Thread Index " << t->index << "] [Level " << t->level
@@ -110,15 +109,16 @@ void* computeSum(void* arg) {
 
 		ThreadArg* leftChild = &base_threads[t->leftChildIndex];
 		ThreadArg* rightChild = &base_threads[t->rightChildIndex];
-
+		pthread_mutex_lock(&cout_mutex);
 		cout << "Left Child [Index " << t->leftChildIndex << ", Level "
 		   << leftChild->level << ", Position " << leftChild->position
 		   << ", TID " << leftChild->thread << "]: " << leftResult << endl;
-
+		pthread_mutex_unlock(&cout_mutex);
+		pthread_mutex_lock(&cout_mutex);
 		cout << "Right Child [Index " << t->rightChildIndex << ", Level "
 			 << rightChild->level << ", Position " << rightChild->position
 			 << ", TID " << rightChild->thread << "]: " << rightResult << endl;
-
+		pthread_mutex_unlock(&cout_mutex);
 
 		// Replace your current sum printing with:
 		if (t->index == 0) {
@@ -180,13 +180,12 @@ void* computeSum(void* arg) {
 
 		// We've already printed the termination message, so return
 		return nullptr;
-	} else {
-		// For leaf nodes, just print termination message
-		pthread_mutex_lock(&cout_mutex);
-		cout << "[Thread Index " << t->index << "] [Level " << t->level
-			 << ", Position " << t->position << "] terminated." << endl;
-		pthread_mutex_unlock(&cout_mutex);
 	}
+	// For leaf nodes, just print termination message
+	pthread_mutex_lock(&cout_mutex);
+	cout << "[Thread Index " << t->index << "] [Level " << t->level
+			<< ", Position " << t->position << "] terminated." << endl;
+	pthread_mutex_unlock(&cout_mutex);
 
 	return nullptr;
 }
@@ -206,9 +205,8 @@ int main() {
 	int N = 1 << (H - 1);
 	int padding = (N - (M % N)) % N;
 	int m_Prime = padding + M;
-	if(M % N != 0) {
-		inputArray.resize(m_Prime, 0); // pad input array with zeros
-	}
+	inputArray.resize(m_Prime, 0); // pad input array with zeros
+
 
 	int chunkSize = m_Prime / N;
 	int totalThreads = (1 << H) - 1;
@@ -218,7 +216,7 @@ int main() {
 	vector<int> results(totalThreads, 0);
 
 	// Step 4: Initialize each thread's data
-	for(int i = 0; i < totalThreads; ++i) {  // Fixed: initialize ALL threads
+	for(int i = 0; i < totalThreads; ++i) {
 		ThreadArg &t = threadArgs[i];
 		t.index = i;
 
@@ -237,19 +235,7 @@ int main() {
 		if(t.isLeaf) {
 			int leafIndex = i - ((1 << (H-1)) - 1); // Convert thread index to leaf position (j)
 			t.startIndex = leafIndex * chunkSize;
-			t.endIndex = (leafIndex + 1) * chunkSize - 1;
-			// Special handling for uneven distribution
-			if (leafIndex == 0) {
-				// First leaf gets ceiling(M/N) elements
-				int firstChunkSize = (M + N - 1) / N;  // Ceiling division
-				t.startIndex = 0;
-				t.endIndex = firstChunkSize - 1;
-			} else {
-				// Other leaves divide the remaining elements
-				int firstChunkSize = (M + N - 1) / N;  // Ceiling division
-				t.startIndex = firstChunkSize;
-				t.endIndex = M - 1;
-			}
+			t.endIndex = (leafIndex + 1) * chunkSize - 1 ;
 		}
 
 		// init compute‑phase sync
